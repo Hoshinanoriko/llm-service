@@ -48,8 +48,11 @@ spec:
               value: "facebook/opt-125m"
             # USE_VLLM=false → transformers backend (CPU, works in kind locally)
             # Change to "true" for production with a GPU node
+            # USE_VLLM=false: use transformers (CPU) — required for Apple Silicon / kind.
+            # vLLM only runs on x86_64 Linux with CUDA; it cannot be installed on ARM64.
+            # To enable vLLM in production, change this to "true" on a GPU x86 node.
             - name: USE_VLLM
-              value: "true"
+              value: "false"
           # Liveness probe: K8s calls this every 30s.
           # If it fails 3 times, the Pod is killed and restarted.
           livenessProbe:
