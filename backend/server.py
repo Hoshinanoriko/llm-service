@@ -23,9 +23,15 @@ Key concepts:
 """
 
 import asyncio
+import logging
 import os
 import time
 import uuid
+
+# Silence transformers' own verbosity system (separate from Python logging).
+# Must happen before transformers is imported, so we set the env var instead.
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -166,14 +172,19 @@ async def _generate_transformers(prompt: str, max_tokens: int) -> str:
     handle other requests concurrently.
     """
     def _run():
-        # Pass max_new_tokens only (not max_length) to avoid a transformers
-        # warning about conflicting length parameters.
-        result = pipe(prompt, max_new_tokens=max_tokens, do_sample=True, temperature=0.7, truncation=True)
-        # The pipeline returns a list of dicts. result[0]["generated_text"]
-        # contains the full string including the original prompt, so we
-        # strip the prompt from the beginning.
-        full_text = result[0]["generated_text"]
-        return full_text[len(prompt):]
+        # return_full_text=False: return only the generated tokens, not the
+        # prompt — cleaner than slicing the string ourselves.
+        # truncation=True: silently truncate the prompt if it exceeds the
+        # model's context window instead of raising an error.
+        result = pipe(
+            prompt,
+            max_new_tokens=max_tokens,
+            do_sample=True,
+            temperature=0.7,
+            truncation=True,
+            return_full_text=False,
+        )
+        return result[0]["generated_text"]
 
     return await asyncio.to_thread(_run)
 
@@ -189,16 +200,25 @@ async def chat_completions(request: ChatRequest):
     Response format follows the OpenAI spec so any OpenAI-compatible client works.
     """
     start_time = time.time()
+    req_id = str(uuid.uuid4())[:8]   # short ID to correlate start/end lines
     try:
         prompt = request.messages[-1].content
+
+        # Log at start so concurrent requests are visible in logs immediately.
+        # Without this, uvicorn only logs one line after the response is sent,
+        # making concurrent requests look identical to sequential ones.
+        print(f"[{req_id}] START  prompt={prompt[:30]!r}", flush=True)
 
         if USE_VLLM:
             generated_text = await _generate_vllm(prompt, request.max_tokens)
         else:
             generated_text = await _generate_transformers(prompt, request.max_tokens)
 
+        elapsed = time.time() - start_time
+        print(f"[{req_id}] DONE   {elapsed:.1f}s", flush=True)
+
         REQUEST_COUNT.labels(status="success").inc()
-        REQUEST_LATENCY.observe(time.time() - start_time)
+        REQUEST_LATENCY.observe(elapsed)
 
         # OpenAI response format — OpenWebUI requires choices[0].message.content
         return {
