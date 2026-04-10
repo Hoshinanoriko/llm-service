@@ -36,10 +36,10 @@ load:
 	kind load docker-image llm-backend:local --name llm
 
 # Apply all Kubernetes manifests to the cluster.
-# "kubectl apply -f" is idempotent — safe to run multiple times.
-# It creates resources that don't exist and updates ones that do.
+# We list files explicitly to skip kind-config.yaml, which is a kind-specific
+# file that kubectl does not understand.
 deploy:
-	kubectl apply -f k8s/
+	kubectl apply -f k8s/backend.yaml -f k8s/frontend.yaml -f k8s/prometheus.yaml
 
 # ── Convenience targets ───────────────────────────────────────────────────────
 
