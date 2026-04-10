@@ -238,3 +238,4 @@ async def chat_completions(request: ChatRequest):
     except Exception as e:
         REQUEST_COUNT.labels(status="error").inc()
         raise HTTPException(status_code=500, detail=str(e))
+# demo
