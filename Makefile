@@ -27,11 +27,15 @@ cluster-down:
 build:
 	docker build -t llm-backend:local ./backend
 
-# Load the locally built image into the kind cluster.
-# WHY: kind runs inside Docker. When K8s tries to pull an image, it looks
-# inside the kind node's local image cache — not your Mac's Docker daemon.
-# "kind load" copies the image from your Mac into that node's cache.
-# This replaces the need for a registry during local development.
+# Load the backend image into kind from Docker's local cache.
+# Only llm-backend:local is loaded this way because it is a single-platform
+# image we built ourselves — kind load works reliably for it.
+#
+# The public images (OpenWebUI, Prometheus, Grafana) are pulled directly by
+# Kubernetes on first use. On Apple Silicon Macs, multi-platform images stored
+# locally cannot be exported into kind reliably, so we let K8s pull them.
+# After the first cluster creation they are cached inside kind and subsequent
+# `make dev-up` runs are instant.
 load:
 	kind load docker-image llm-backend:local --name llm
 
