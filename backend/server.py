@@ -166,7 +166,9 @@ async def _generate_transformers(prompt: str, max_tokens: int) -> str:
     handle other requests concurrently.
     """
     def _run():
-        result = pipe(prompt, max_new_tokens=max_tokens, do_sample=True, temperature=0.7)
+        # Pass max_new_tokens only (not max_length) to avoid a transformers
+        # warning about conflicting length parameters.
+        result = pipe(prompt, max_new_tokens=max_tokens, do_sample=True, temperature=0.7, truncation=True)
         # The pipeline returns a list of dicts. result[0]["generated_text"]
         # contains the full string including the original prompt, so we
         # strip the prompt from the beginning.
