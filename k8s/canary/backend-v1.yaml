@@ -1,0 +1,57 @@
+# k8s/canary/backend-v1.yaml
+#
+# The STABLE deployment — carries the majority of traffic.
+#
+# Key idea: this Deployment has TWO labels on its pods:
+#   app: backend     ← the Service uses this to find ALL backend pods
+#   version: v1      ← lets you select ONLY v1 pods if needed
+#
+# The backend Service (defined in k8s/backend.yaml) selects on "app: backend",
+# so it routes traffic to BOTH v1 and v2 pods. The split is determined purely
+# by replica count: 1 v1 + 1 v2 = 50/50. Scale to 9+1 for 90/10.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-v1
+  labels:
+    app: backend
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: backend   # ← Service routes to this pod
+        version: v1    # ← identifies it as stable
+    spec:
+      containers:
+        - name: backend
+          image: llm-backend:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000
+          env:
+            - name: MODEL_NAME
+              value: "facebook/opt-125m"
+            - name: VERSION
+              value: "v1"              # returned in /health so you can see which pod replied
+            - name: USE_VLLM
+              value: "false"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2"

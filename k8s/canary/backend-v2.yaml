@@ -1,0 +1,62 @@
+# k8s/canary/backend-v2.yaml
+#
+# The CANARY deployment — receives a small slice of traffic initially.
+#
+# In this demo both v1 and v2 use the same model. In a real scenario v2
+# would use a different model (e.g. a fine-tuned or larger version).
+# The deployment mechanics are identical regardless of the model.
+#
+# To adjust the traffic split, change replicas:
+#   1 v1 + 1 v2  →  50% canary  (what we start with for demo)
+#   9 v1 + 1 v2  →  10% canary  (typical production canary)
+#   0 v1 + 1 v2  →  100% canary  (roll forward — v2 is now stable)
+#
+# To ROLL BACK:  kubectl scale deployment backend-v2 --replicas=0
+# To ROLL FORWARD: kubectl scale deployment backend-v2 --replicas=9
+#                  kubectl scale deployment backend-v1 --replicas=0
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-v2
+  labels:
+    app: backend
+    version: v2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: backend   # ← same label as v1 — Service routes to both
+        version: v2
+    spec:
+      containers:
+        - name: backend
+          image: llm-backend:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000
+          env:
+            - name: MODEL_NAME
+              value: "facebook/opt-125m"
+            - name: VERSION
+              value: "v2"              # the only visible difference in this demo
+            - name: USE_VLLM
+              value: "false"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2"

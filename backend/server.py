@@ -42,6 +42,10 @@ from prometheus_client import Counter, Histogram, make_asgi_app
 
 USE_VLLM = os.getenv("USE_VLLM", "false").lower() == "true"
 MODEL_NAME = os.getenv("MODEL_NAME", "facebook/opt-125m")
+# VERSION identifies which deployment handled a request.
+# Set to "v1" or "v2" via env var in the K8s manifest.
+# This makes canary traffic visible — you can see which pod replied.
+VERSION = os.getenv("VERSION", "v1")
 
 if USE_VLLM:
     # GPU path: import vLLM's async engine.
@@ -136,6 +140,7 @@ async def health():
     return {
         "status": "ok",
         "model": MODEL_NAME,
+        "version": VERSION,
         "backend": "vllm" if USE_VLLM else "transformers",
     }
 

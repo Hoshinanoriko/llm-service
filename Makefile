@@ -6,7 +6,7 @@
 # .PHONY tells make these are not filenames — they're always commands.
 # Without it, make would skip a target if a file with the same name existed.
 
-.PHONY: cluster-up cluster-down build load deploy dev-up dev-down status logs
+.PHONY: cluster-up cluster-down build load deploy dev-up dev-down status logs canary-deploy canary-rollback canary-forward
 
 # ── Cluster lifecycle ─────────────────────────────────────────────────────────
 
@@ -82,3 +82,24 @@ status:
 # "--follow" streams new log lines as they appear (like tail -f).
 logs:
 	kubectl logs -l app=backend --follow
+
+# ── Canary deployment ─────────────────────────────────────────────────────────
+
+# Start canary: remove the single backend deployment and replace with v1+v2.
+# Both have label app=backend so the Service routes to both (50/50 split).
+canary-deploy:
+	kubectl delete deployment backend --ignore-not-found
+	kubectl apply -f k8s/canary/backend-v1.yaml -f k8s/canary/backend-v2.yaml
+	@echo "Canary deployed: v1 (stable) + v2 (canary) — 50/50 split"
+	@echo "Watch traffic:  for i in \$$(seq 1 20); do curl -s http://localhost:30800/health | python3 -c \"import sys,json; print(json.load(sys.stdin)['version'])\"; done"
+
+# Roll BACK: scale v2 to 0. All traffic goes to v1.
+canary-rollback:
+	kubectl scale deployment backend-v2 --replicas=0
+	@echo "Rolled back — 100% traffic on v1"
+
+# Roll FORWARD: scale v2 to full, remove v1. v2 becomes the new stable.
+canary-forward:
+	kubectl scale deployment backend-v2 --replicas=1
+	kubectl scale deployment backend-v1 --replicas=0
+	@echo "Rolled forward — 100% traffic on v2"
