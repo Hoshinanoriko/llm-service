@@ -1,0 +1,64 @@
+# k8s/canary/router.yaml
+#
+# The router sits in front of all LLM backends and dispatches requests
+# by reading the "model" field in the request body (OpenAI-style routing).
+#
+# Key design decision — label "app: backend":
+#   The existing backend Service (k8s/backend.yaml) selects pods with
+#   label "app: backend". By giving the router pod that same label,
+#   it slots into the existing Service without any Service changes.
+#   When `make canary-deploy` deletes the original backend Deployment,
+#   the router takes its place automatically.
+#
+# Roll-back  (remove canary, all traffic on v1):
+#   kubectl set env deployment/router \
+#     ROUTES="facebook/opt-125m=http://backend-v1:8000"
+#   kubectl scale deployment backend-v2 --replicas=0
+#
+# Roll-forward (v2 becomes stable, rename to canonical model name):
+#   kubectl set env deployment/router \
+#     ROUTES="facebook/opt-125m=http://backend-v2:8000"
+#   kubectl scale deployment backend-v1 --replicas=0
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: router
+  labels:
+    app: router
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend        # must match the backend Service selector
+  template:
+    metadata:
+      labels:
+        app: backend      # Service routes to this pod
+    spec:
+      containers:
+        - name: router
+          image: llm-router:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000   # public API — matches backend Service targetPort
+            - containerPort: 9090   # Prometheus metrics — matches backend Service metrics port
+          env:
+            # Routing table: "model-name=http://service:port" entries, comma-separated.
+            # Both models are available by default (50/50 user choice).
+            # Change this with `kubectl set env` to roll back or forward — see above.
+            - name: ROUTES
+              value: "facebook/opt-125m=http://backend-v1:8000,facebook/opt-350m=http://backend-v2:8000"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"

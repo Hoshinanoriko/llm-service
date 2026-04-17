@@ -1,37 +1,30 @@
 # k8s/canary/backend-v2.yaml
 #
-# The CANARY deployment — receives a small slice of traffic initially.
+# The CANARY backend. Serves model "facebook/opt-125m-v2".
 #
-# In this demo both v1 and v2 use the same model. In a real scenario v2
-# would use a different model (e.g. a fine-tuned or larger version).
-# The deployment mechanics are identical regardless of the model.
+# In this demo both v1 and v2 use the same underlying model weights.
+# In a real scenario, MODEL_NAME would point to a fine-tuned or larger model.
+# The routing mechanic (router reads "model" field → dispatches here) is
+# identical regardless of which model is actually loaded.
 #
-# To adjust the traffic split, change replicas:
-#   1 v1 + 1 v2  →  50% canary  (what we start with for demo)
-#   9 v1 + 1 v2  →  10% canary  (typical production canary)
-#   0 v1 + 1 v2  →  100% canary  (roll forward — v2 is now stable)
-#
-# To ROLL BACK:  kubectl scale deployment backend-v2 --replicas=0
-# To ROLL FORWARD: kubectl scale deployment backend-v2 --replicas=9
-#                  kubectl scale deployment backend-v1 --replicas=0
+# The router forwards requests for "facebook/opt-125m-v2" to backend-v2:8000.
 
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend-v2
   labels:
-    app: backend
+    app: backend-v2
     version: v2
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: backend
-      version: v2
+      app: backend-v2
   template:
     metadata:
       labels:
-        app: backend   # ← same label as v1 — Service routes to both
+        app: backend-v2
         version: v2
     spec:
       containers:
@@ -39,12 +32,18 @@ spec:
           image: llm-backend:local
           imagePullPolicy: Never
           ports:
-            - containerPort: 8000
+            - containerPort: 8000   # inference API
+            - containerPort: 9090   # Prometheus metrics
           env:
+            # MODEL_NAME: the real HuggingFace weights to load (must exist).
             - name: MODEL_NAME
-              value: "facebook/opt-125m"
+              value: "facebook/opt-350m"
+            # MODEL_ID: the logical name this deployment advertises in the API.
+            # The router matches on this name, not MODEL_NAME.
+            - name: MODEL_ID
+              value: "facebook/opt-350m"
             - name: VERSION
-              value: "v2"              # the only visible difference in this demo
+              value: "v2"
             - name: USE_VLLM
               value: "false"
           livenessProbe:
@@ -60,3 +59,23 @@ spec:
             limits:
               memory: "4Gi"
               cpu: "2"
+
+---
+# ClusterIP Service — reachable only inside the cluster.
+# The router uses DNS name "backend-v2" to forward requests here.
+# No nodePort — users cannot reach this directly.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-v2
+spec:
+  selector:
+    app: backend-v2
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+    - name: metrics
+      port: 9090
+      targetPort: 9090

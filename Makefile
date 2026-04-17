@@ -6,7 +6,7 @@
 # .PHONY tells make these are not filenames — they're always commands.
 # Without it, make would skip a target if a file with the same name existed.
 
-.PHONY: cluster-up cluster-down build load deploy dev-up dev-down status logs canary-deploy canary-rollback canary-forward
+.PHONY: cluster-up cluster-down build load deploy dev-up dev-down status logs canary-deploy canary-rollback canary-forward port-forward-prometheus port-forward-grafana build-router load-router
 
 # ── Cluster lifecycle ─────────────────────────────────────────────────────────
 
@@ -27,6 +27,9 @@ cluster-down:
 build:
 	docker build -t llm-backend:local ./backend
 
+build-router:
+	docker build -t llm-router:local ./router
+
 # Load the backend image into kind from Docker's local cache.
 # Only llm-backend:local is loaded this way because it is a single-platform
 # image we built ourselves — kind load works reliably for it.
@@ -38,6 +41,9 @@ build:
 # `make dev-up` runs are instant.
 load:
 	kind load docker-image llm-backend:local --name llm
+
+load-router:
+	kind load docker-image llm-router:local --name llm
 
 # Apply all Kubernetes manifests to the cluster.
 # We list files explicitly to skip kind-config.yaml, which is a kind-specific
@@ -57,8 +63,8 @@ dev-up: build load deploy
 	@echo "Cluster is up. Access points:"
 	@echo "  Backend API : http://localhost:30800"
 	@echo "  OpenWebUI   : http://localhost:30300"
-	@echo "  Prometheus  : http://localhost:30090"
-	@echo "  Grafana     : http://localhost:30030"
+	@echo "  Prometheus  : make port-forward-prometheus  →  http://localhost:9090"
+	@echo "  Grafana     : make port-forward-grafana     →  http://localhost:3000"
 
 # Tear down everything: delete K8s resources and the cluster itself.
 dev-down:
@@ -83,23 +89,44 @@ status:
 logs:
 	kubectl logs -l app=backend --follow
 
+# ── Observability access (dev only) ──────────────────────────────────────────
+# Prometheus and Grafana use ClusterIP Services — not reachable from outside
+# the cluster. Use these targets to open a tunnel from your laptop into the
+# cluster for development access. Press Ctrl+C to close the tunnel.
+
+port-forward-prometheus:
+	kubectl port-forward svc/prometheus 9090:9090
+
+port-forward-grafana:
+	kubectl port-forward svc/grafana 3000:3000
+
 # ── Canary deployment ─────────────────────────────────────────────────────────
 
-# Start canary: remove the single backend deployment and replace with v1+v2.
-# Both have label app=backend so the Service routes to both (50/50 split).
-canary-deploy:
+# Start canary: build and load the router, then deploy router + v1 + v2.
+# The router replaces the single backend Deployment behind the same Service.
+# Users select a model in OpenWebUI; the router dispatches to the right backend.
+#   facebook/opt-125m    → backend-v1 (stable)
+#   facebook/opt-125m-v2 → backend-v2 (canary)
+canary-deploy: build-router load-router
 	kubectl delete deployment backend --ignore-not-found
-	kubectl apply -f k8s/canary/backend-v1.yaml -f k8s/canary/backend-v2.yaml
-	@echo "Canary deployed: v1 (stable) + v2 (canary) — 50/50 split"
-	@echo "Watch traffic:  for i in \$$(seq 1 20); do curl -s http://localhost:30800/health | python3 -c \"import sys,json; print(json.load(sys.stdin)['version'])\"; done"
+	kubectl apply -f k8s/canary/backend-v1.yaml -f k8s/canary/backend-v2.yaml -f k8s/canary/router.yaml
+	@echo ""
+	@echo "Canary deployed (model-routing mode):"
+	@echo "  facebook/opt-125m    → backend-v1 (stable)"
+	@echo "  facebook/opt-125m-v2 → backend-v2 (canary)"
+	@echo "Select a model in OpenWebUI to route to a specific backend."
 
-# Roll BACK: scale v2 to 0. All traffic goes to v1.
+# Roll BACK: remove v2 from the routing table, then scale it down.
+# The router returns 404 for facebook/opt-125m-v2; all chat goes to v1.
 canary-rollback:
+	kubectl set env deployment/router ROUTES="facebook/opt-125m=http://backend-v1:8000"
 	kubectl scale deployment backend-v2 --replicas=0
-	@echo "Rolled back — 100% traffic on v1"
+	@echo "Rolled back — only facebook/opt-125m (v1) available"
 
-# Roll FORWARD: scale v2 to full, remove v1. v2 becomes the new stable.
+# Roll FORWARD: v2 becomes the sole stable model under its own name.
+# facebook/opt-125m is retired; facebook/opt-350m is the new standard.
+# Users must select the new model name in OpenWebUI.
 canary-forward:
-	kubectl scale deployment backend-v2 --replicas=1
+	kubectl set env deployment/router ROUTES="facebook/opt-350m=http://backend-v2:8000"
 	kubectl scale deployment backend-v1 --replicas=0
-	@echo "Rolled forward — 100% traffic on v2"
+	@echo "Rolled forward — facebook/opt-350m is now the only available model"

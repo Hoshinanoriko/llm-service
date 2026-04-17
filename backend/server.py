@@ -34,14 +34,25 @@ os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from prometheus_client import Counter, Histogram, make_asgi_app
+from prometheus_client import Counter, Histogram, start_http_server
 
 # ── Backend selection ─────────────────────────────────────────────────────────
 # Read env var at startup to decide which inference backend to use.
 # os.getenv returns the value as a string, so we compare with "true".
 
 USE_VLLM = os.getenv("USE_VLLM", "false").lower() == "true"
+
+# MODEL_NAME: the real HuggingFace weights to download and load.
+# Must be a valid HuggingFace model identifier (e.g. "facebook/opt-125m").
 MODEL_NAME = os.getenv("MODEL_NAME", "facebook/opt-125m")
+
+# MODEL_ID: the name this server advertises in /v1/models and responses.
+# Defaults to MODEL_NAME, but can be overridden to give a deployment a
+# different logical name without changing the underlying weights.
+# Example: MODEL_NAME=facebook/opt-125m, MODEL_ID=facebook/opt-125m-v2
+# lets the router distinguish v1 from v2 even though both load the same model.
+MODEL_ID = os.getenv("MODEL_ID", MODEL_NAME)
+
 # VERSION identifies which deployment handled a request.
 # Set to "v1" or "v2" via env var in the K8s manifest.
 # This makes canary traffic visible — you can see which pod replied.
@@ -68,10 +79,16 @@ else:
 
 app = FastAPI(title="LLM Inference Server")
 
-# Mount the Prometheus metrics endpoint at /metrics.
-# make_asgi_app() creates a tiny ASGI app that serializes metrics to text.
-metrics_app = make_asgi_app()
-app.mount("/metrics", metrics_app)
+# Start a dedicated metrics server on a separate port (default 9090).
+# This keeps /metrics off the public-facing port 8000 entirely.
+# In Kubernetes, port 9090 is exposed only inside the cluster (ClusterIP),
+# so Prometheus can scrape it but end users cannot reach it.
+# The START_METRICS_SERVER guard lets tests skip this step (binding a port
+# in tests is fragile and unnecessary — we only care about the app logic).
+METRICS_PORT = int(os.getenv("METRICS_PORT", "9090"))
+if os.getenv("START_METRICS_SERVER", "true").lower() == "true":
+    start_http_server(METRICS_PORT)
+    print(f"[backend] Prometheus metrics server started on port {METRICS_PORT}")
 
 # ── Prometheus metrics ────────────────────────────────────────────────────────
 # Counter: a number that only goes up (total requests)
@@ -97,7 +114,7 @@ class Message(BaseModel):
     content: str   # the actual text
 
 class ChatRequest(BaseModel):
-    model: str = MODEL_NAME
+    model: str = MODEL_ID
     messages: list[Message]
     max_tokens: int = 200
 
@@ -121,7 +138,7 @@ async def list_models():
         "object": "list",
         "data": [
             {
-                "id": MODEL_NAME,        # e.g. "facebook/opt-125m"
+                "id": MODEL_ID,          # the logical name this deployment advertises
                 "object": "model",
                 "created": 0,
                 "owned_by": "local",
@@ -139,7 +156,7 @@ async def health():
     """
     return {
         "status": "ok",
-        "model": MODEL_NAME,
+        "model": MODEL_ID,
         "version": VERSION,
         "backend": "vllm" if USE_VLLM else "transformers",
     }

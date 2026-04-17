@@ -16,4 +16,4 @@ scrape_configs:
     # In Docker Compose, "backend" resolves to the backend container's IP.
     # In Kubernetes, you'll change this to the Service name.
     static_configs:
-      - targets: ["backend:8000"]   # <host>:<port> of the /metrics endpoint
+      - targets: ["backend:9090"]   # dedicated metrics port (separate from public API port 8000)

@@ -20,7 +20,10 @@ data:
       - job_name: "llm-backend"
         static_configs:
           # "backend" resolves to the backend Service inside the cluster.
-          - targets: ["backend:8000"]
+          # Port 9090 is the dedicated metrics port — separate from the
+          # public API port 8000. Prometheus scrapes internally; users cannot
+          # reach port 9090 because the backend Service has no nodePort for it.
+          - targets: ["backend:9090"]
 
 ---
 # ── Deployment ────────────────────────────────────────────────────────────────
@@ -65,11 +68,12 @@ metadata:
 spec:
   selector:
     app: prometheus
-  type: NodePort
+  # ClusterIP: only reachable inside the cluster.
+  # Use `kubectl port-forward` (make port-forward-prometheus) for dev access.
+  type: ClusterIP
   ports:
     - port: 9090
       targetPort: 9090
-      nodePort: 30090    # access Prometheus at localhost:30090
 
 ---
 # ── Grafana ───────────────────────────────────────────────────────────────────
@@ -106,8 +110,9 @@ metadata:
 spec:
   selector:
     app: grafana
-  type: NodePort
+  # ClusterIP: only reachable inside the cluster.
+  # Use `kubectl port-forward` (make port-forward-grafana) for dev access.
+  type: ClusterIP
   ports:
     - port: 3000
       targetPort: 3000
-      nodePort: 30030    # access Grafana at localhost:30030

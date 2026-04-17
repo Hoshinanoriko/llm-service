@@ -42,7 +42,8 @@ spec:
           # This is required for kind local dev; remove for production.
           imagePullPolicy: Never
           ports:
-            - containerPort: 8000
+            - containerPort: 8000   # public API (chat, health, models)
+            - containerPort: 9090   # internal-only Prometheus metrics
           env:
             - name: MODEL_NAME
               value: "facebook/opt-125m"
@@ -86,7 +87,11 @@ spec:
     app: backend       # route traffic to Pods with label app=backend
   type: NodePort
   ports:
-    - port: 8000           # the port this Service listens on inside the cluster
+    - name: http
+      port: 8000           # the port this Service listens on inside the cluster
       targetPort: 8000     # the port on the Pod to forward traffic to
       nodePort: 30800      # the port exposed on the node (accessible from host)
                            # access at: localhost:30800 (with kind port mapping)
+    - name: metrics
+      port: 9090           # internal metrics port — no nodePort, not reachable from outside
+      targetPort: 9090     # Prometheus scrapes backend:9090 inside the cluster

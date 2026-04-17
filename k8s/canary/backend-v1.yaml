@@ -1,45 +1,45 @@
 # k8s/canary/backend-v1.yaml
 #
-# The STABLE deployment — carries the majority of traffic.
+# The STABLE backend. Serves model "facebook/opt-125m".
 #
-# Key idea: this Deployment has TWO labels on its pods:
-#   app: backend     ← the Service uses this to find ALL backend pods
-#   version: v1      ← lets you select ONLY v1 pods if needed
+# Differences from the old canary setup:
+#   - Label is "app: backend-v1" (not "app: backend") — this pod is NOT
+#     directly reachable from outside. Only the router can reach it via
+#     the ClusterIP Service "backend-v1".
+#   - Has its own Service so the router can address it by DNS name.
 #
-# The backend Service (defined in k8s/backend.yaml) selects on "app: backend",
-# so it routes traffic to BOTH v1 and v2 pods. The split is determined purely
-# by replica count: 1 v1 + 1 v2 = 50/50. Scale to 9+1 for 90/10.
+# The router forwards requests for "facebook/opt-125m" to backend-v1:8000.
 
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: backend-v1
   labels:
-    app: backend
+    app: backend-v1
     version: v1
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: backend
-      version: v1
+      app: backend-v1
   template:
     metadata:
       labels:
-        app: backend   # ← Service routes to this pod
-        version: v1    # ← identifies it as stable
+        app: backend-v1
+        version: v1
     spec:
       containers:
         - name: backend
           image: llm-backend:local
           imagePullPolicy: Never
           ports:
-            - containerPort: 8000
+            - containerPort: 8000   # inference API
+            - containerPort: 9090   # Prometheus metrics
           env:
             - name: MODEL_NAME
               value: "facebook/opt-125m"
             - name: VERSION
-              value: "v1"              # returned in /health so you can see which pod replied
+              value: "v1"
             - name: USE_VLLM
               value: "false"
           livenessProbe:
@@ -55,3 +55,23 @@ spec:
             limits:
               memory: "4Gi"
               cpu: "2"
+
+---
+# ClusterIP Service — reachable only inside the cluster.
+# The router uses DNS name "backend-v1" to forward requests here.
+# No nodePort — users cannot reach this directly.
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-v1
+spec:
+  selector:
+    app: backend-v1
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+    - name: metrics
+      port: 9090
+      targetPort: 9090

@@ -27,6 +27,7 @@ import pytest
 
 os.environ["USE_VLLM"] = "false"
 os.environ["MODEL_NAME"] = "test-model"
+os.environ["START_METRICS_SERVER"] = "false"  # don't bind port 9090 in tests
 
 
 # ── Step 2: Mock the 'transformers' package ───────────────────────────────────
