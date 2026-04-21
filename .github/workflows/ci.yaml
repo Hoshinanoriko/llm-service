@@ -94,7 +94,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Docker image names must be lowercase. github.repository_owner preserves
-      # the original casing (e.g. "Hoshinanoriko"), so we lowercase it here
+      # the original casing (e.g. "qihliu"), so we lowercase it here
       # and store the result in GITHUB_OUTPUT for the next step to use.
       - name: Set lowercase image name
         id: image

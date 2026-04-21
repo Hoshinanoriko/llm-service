@@ -35,7 +35,7 @@ spec:
           #   kind load docker-image llm-backend:local --name llm
           #
           # PRODUCTION: change to the GHCR image pushed by CI:
-          #   image: ghcr.io/Hoshinanoriko/llm-backend:latest
+          #   image: ghcr.io/qihliu/llm-backend:latest
           #   (and remove imagePullPolicy: Never below)
           image: llm-backend:local
           # Never: don't try to pull from a registry — use the locally loaded image.
